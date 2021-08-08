@@ -8,7 +8,8 @@ long safefail(void) {
 	return -1;
 }
 
-// library header stuff
+// library header stuff - kind of forward decls - results in a rom tag directly behind the cli-do-nothing-function.
+// the real values are defined at the end.
 const struct Resident RomTag;
 const char libName[];
 const char libIdString[];
@@ -75,8 +76,6 @@ struct MyLib * LibOpen(struct MyLib *mylib asm("a6")) {
 	return mylib;
 }
 
-void foo() {}
-
 APTR LibInit(long segList asm("a0"), struct MyLib * lib asm("d0"), struct ExecBase *sysBase asm("a6")) {
 	/* set up header data */
 	lib->lib.lib_Node.ln_Type = NT_LIBRARY;
@@ -95,12 +94,14 @@ APTR LibInit(long segList asm("a0"), struct MyLib * lib asm("d0"), struct ExecBa
 	return lib;
 }
 
-// magic
+// the function table
 const APTR __FuncTable__[] = { LibOpen, LibClose, LibExpunge, NULL,
 		MYFUNCTIONS
 , (APTR) -1 };
 
+// the libraries init table
 const APTR InitTab[4] = { (APTR) sizeof(struct MyLib), (APTR)&__FuncTable__[0], (APTR) NULL, (APTR) &LibInit };
 
+// that's what the library loader is looking for: the rom tag with references to the remaining data.
 const struct Resident RomTag = { RTC_MATCHWORD, (struct Resident*) &RomTag, (struct Resident*) &RomTag + 1, RTF_AUTOINIT, 1,
 NT_LIBRARY, 0, (char*) libName, (char*) libIdString, (APTR) &InitTab };
