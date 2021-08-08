@@ -24,4 +24,4 @@ the register a6 is loaded while invoking the library function.
 
 ## library modes
 this example provides a library base which shares the data to all openers.
-A variant which provides a library base per opener: TBD.
+if you need a variant which provides a library base per opener: #define MULTIBASE.
