@@ -22,6 +22,31 @@ long LibExtFunc(void) {
 	return 0;
 }
 
+// init the library. defer real init stuff to LibOpen!
+APTR LibInit(long segList asm("a0"), struct MyLib * mylib asm("d0"), struct ExecBase *sysBase asm("a6")) {
+	/* set up header data */
+	mylib->lib.lib_Node.ln_Type = NT_LIBRARY;
+	mylib->lib.lib_Node.ln_Name = (char*) libName;
+	mylib->lib.lib_Flags = LIBF_CHANGED | LIBF_SUMUSED;
+	mylib->lib.lib_Version = (UWORD) 1;
+	mylib->lib.lib_Revision = (UWORD) 0;
+	mylib->lib.lib_IdString = (char*) libIdString;
+
+	/* setup private data */
+	mylib->segList = segList;
+	mylib->sysBase = sysBase;
+	mylib->initialized = 0;  // also used as marker if init is needed.
+
+	SYSBASE;
+
+	// init a semaphore
+	InitSemaphore(&mylib->sema);
+
+	/* this will be added to SysBase->LibList or NULL (init error) */
+	return mylib;
+}
+
+
 // bye bye library
 long LibExpunge(struct MyLib *mylib asm("a6")) {
 	SYSBASE;
@@ -36,33 +61,21 @@ long LibExpunge(struct MyLib *mylib asm("a6")) {
 	/* remove lib from SysBase->LibList */
 	Remove(&mylib->lib.lib_Node);
 
+	__myexit(mylib);
+
 	/* return the seglist for UnLoadSeg() */
 	return mylib->segList;
-}
-
-// close the library
-long LibClose(struct MyLib *mylib asm("a6")) {
-	SYSBASE;
-
-	/* do your user-close here */
-	CloseLibrary(mylib->utilityBase);
-
-	/* one less user */
-	if (!--mylib->lib.lib_OpenCnt && (mylib->lib.lib_Flags & LIBF_DELEXP))
-		return LibExpunge(mylib);
-
-	return 0;
 }
 
 // open the library
 struct MyLib * LibOpen(struct MyLib *mylib asm("a6")) {
 	SYSBASE;
+
+	ObtainSemaphore(&mylib->sema);
+
 	/* any memory allocation can cause a call of THIS device expunge vector.
 	 if OpenCnt is zero the library might go away ... so fake a user :-) */
 	++mylib->lib.lib_OpenCnt;
-
-	/* do your opening stuff here */
-    mylib->utilityBase = OpenLibrary((STRPTR)"utility.library", 0);
 
 	/* clear delayed expunge flag */
 	mylib->lib.lib_Flags &= ~LIBF_DELEXP;
@@ -70,28 +83,27 @@ struct MyLib * LibOpen(struct MyLib *mylib asm("a6")) {
 	/* one new user */
 	++mylib->lib.lib_OpenCnt;
 
+	// run the open code only once...
+	if (!mylib->initialized) {
+		mylib->initialized = 1;
+		__myinit(mylib);
+	}
+
 	/* end of expunge protection */
 	--mylib->lib.lib_OpenCnt;
+
+	ReleaseSemaphore(&mylib->sema);
 
 	return mylib;
 }
 
-APTR LibInit(long segList asm("a0"), struct MyLib * lib asm("d0"), struct ExecBase *sysBase asm("a6")) {
-	/* set up header data */
-	lib->lib.lib_Node.ln_Type = NT_LIBRARY;
-	lib->lib.lib_Node.ln_Name = (char*) libName;
-	lib->lib.lib_Flags = LIBF_CHANGED | LIBF_SUMUSED;
-	lib->lib.lib_Version = (UWORD) 1;
-	lib->lib.lib_Revision = (UWORD) 0;
-	lib->lib.lib_IdString = (char*) libIdString;
+// close the library
+long LibClose(struct MyLib *mylib asm("a6")) {
+	/* one less user */
+	if (!--mylib->lib.lib_OpenCnt && (mylib->lib.lib_Flags & LIBF_DELEXP))
+		return LibExpunge(mylib);
 
-	/* setup private data */
-
-	lib->segList = segList;
-	lib->sysBase = sysBase;
-
-	/* this will be added to SysBase->LibList or NULL (init error) */
-	return lib;
+	return 0;
 }
 
 // the function table
