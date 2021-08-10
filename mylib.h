@@ -10,12 +10,9 @@ struct MyLib {
 	struct ExecBase *sysBase;
 	// ==== same order until here as below
 	unsigned long segList;
-	struct SignalSemaphore sema;
 	short initialized;
-#ifndef MULTIBASE
 // add all data here - just an example - see below for MULTIBASE
 	struct Library *utilityBase;
-#endif
 };
 
 #ifdef MULTIBASE
@@ -26,6 +23,7 @@ struct PerOpenerLib {
 	struct MyLib * mylib;
 
 	// add all data here - just an example - this is for MULTIBASE
+	int counter;
 	struct Library *utilityBase;
 };
 typedef struct PerOpenerLib * MYLIB;
@@ -55,8 +53,14 @@ int myfunction2(int a asm("d0"), MYLIB mylib asm("a6"));
 
 #define MYFUNCTIONS myfunction1, myfunction2
 
-// init / exit functions
-void __myinit(MYLIB mylib asm("a6"));
-void __myexit(MYLIB mylib asm("a6"));
+// init / exit functions - called once per lib
+void __myglobalinit(struct MyLib * mylib asm("a6"));
+void __myglobalexit(struct MyLib * mylib asm("a6"));
+
+#ifdef MULTIBASE
+// init / exit functions - called on each open/close
+void __mylocalinit(struct PerOpenerLib * polib asm("a6"));
+void __mylocalexit(struct PerOpenerLib * polib asm("a6"));
+#endif
 
 #endif // __MYLIB_H__

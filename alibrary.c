@@ -36,11 +36,6 @@ APTR LibInit(long segList asm("a0"), struct MyLib * mylib asm("d0"), struct Exec
 	mylib->sysBase = sysBase;
 	mylib->initialized = 0;  // also used as marker if init is needed.
 
-	SYSBASE;
-
-	// init a semaphore
-	InitSemaphore(&mylib->sema);
-
 	/* this will be added to SysBase->LibList or NULL (init error) */
 	return mylib;
 }
@@ -60,9 +55,8 @@ long LibExpunge(struct MyLib *mylib asm("a6")) {
 	/* remove lib from SysBase->LibList */
 	Remove(&mylib->lib.lib_Node);
 
-#ifndef MULTIBASE
-	__myexit(mylib);
-#endif
+	// finally call the per-lib-exit once
+	__myglobalexit(mylib);
 
 	/* return the seglist for UnLoadSeg() */
 	return mylib->segList;
@@ -70,23 +64,21 @@ long LibExpunge(struct MyLib *mylib asm("a6")) {
 
 // open the library
 struct MyLib * LibOpen(struct MyLib *mylib asm("a6")) {
-	SYSBASE;
-
-	ObtainSemaphore(&mylib->sema);
-
-	/* any memory allocation can cause a call of THIS device expunge vector.
-	 if OpenCnt is zero the library might go away ... so fake a user :-) */
+	// Forbid is on - increase the counter
 	++mylib->lib.lib_OpenCnt;
 
 	/* clear delayed expunge flag */
 	mylib->lib.lib_Flags &= ~LIBF_DELEXP;
 
-	/* one new user */
-	++mylib->lib.lib_OpenCnt;
+	// run the open code only once...
+	if (!mylib->initialized) {
+		__myglobalinit(mylib);
+		mylib->initialized = 1;
+	}
 
 #ifdef MULTIBASE
-
-#define MYCPYSIZE sizeof(struct Library) + sizeof(APTR)
+	SYSBASE;
+	// get memory per lib
 	char * b = (char *)AllocVec(sizeof(struct PerOpenerLib) + mylib->lib.lib_NegSize, MEMF_PUBLIC);
 
 	// this copies the jump table and the lib node,
@@ -94,49 +86,38 @@ struct MyLib * LibOpen(struct MyLib *mylib asm("a6")) {
 	CopyMemQuick (((char *)mylib) - mylib->lib.lib_NegSize, b, mylib->lib.lib_NegSize + sizeof(struct Library) + sizeof(APTR));
 	struct PerOpenerLib * polib = (struct PerOpenerLib *)(b + mylib->lib.lib_NegSize);
 
-	__myinit(polib);
-#else
-	// run the open code only once...
-	if (!mylib->initialized) {
-		mylib->initialized = 1;
-		__myinit(mylib);
-	}
+	__mylocalinit(polib);
 #endif
-
-	/* end of expunge protection */
-	--mylib->lib.lib_OpenCnt;
-
-	ReleaseSemaphore(&mylib->sema);
 
 	return mylib;
 }
 
-#ifdef MULTIBASE
 // close the library
-long LibClose(struct PerOpenerLib *polib asm("a6")) {
-	struct MyLib * mylib = polib->mylib;
+long LibClose(MYLIB alib asm("a6")) {
+#ifdef MULTIBASE
+	struct MyLib * mylib = alib->mylib;
 	SYSBASE;
 
-	__myexit(polib);
+	__mylocalexit(alib);
 
-	FreeVec((APTR)-mylib->lib.lib_NegSize[(char *)polib]);
+	FreeVec((APTR)-mylib->lib.lib_NegSize[(char *)alib]);
 
-	/* one less user */
-	if (!--mylib->lib.lib_OpenCnt && (mylib->lib.lib_Flags & LIBF_DELEXP))
-		return LibExpunge(mylib);
-
-	return 0;
-}
+	// just in case __mylocalexit broke Forbid...
+	Forbid();
 #else
-// close the library
-long LibClose(struct MyLib *mylib asm("a6")) {
-	/* one less user */
-	if (!--mylib->lib.lib_OpenCnt && (mylib->lib.lib_Flags & LIBF_DELEXP))
-		return LibExpunge(mylib);
-
-	return 0;
-}
+	struct MyLib * mylib = alib;
 #endif
+
+	/* one less user */
+	long r = 0;
+	if (!--mylib->lib.lib_OpenCnt && (mylib->lib.lib_Flags & LIBF_DELEXP))
+		r = LibExpunge(mylib);
+
+#ifdef MULTIBASE
+	Permit();
+#endif
+	return r;
+}
 
 // the function table
 const APTR __FuncTable__[] = { LibOpen, LibClose, LibExpunge, NULL,
