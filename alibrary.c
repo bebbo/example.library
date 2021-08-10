@@ -58,8 +58,14 @@ long LibExpunge(struct MyLib *mylib asm("a6")) {
 	// finally call the per-lib-exit once
 	__myglobalexit(mylib);
 
+	unsigned long segList = mylib->segList;
+
+	// free the allocated ram of the lib's struct
+	int neg = mylib->lib.lib_NegSize;
+	FreeMem((-neg + (char *)mylib), neg + mylib->lib.lib_PosSize);
+
 	/* return the seglist for UnLoadSeg() */
-	return mylib->segList;
+	return segList;
 }
 
 // open the library
@@ -100,7 +106,7 @@ long LibClose(MYLIB alib asm("a6")) {
 
 	__mylocalexit(alib);
 
-	FreeVec((APTR)-mylib->lib.lib_NegSize[(char *)alib]);
+	FreeVec(((char *)alib) + mylib->lib.lib_NegSize);
 
 	// just in case __mylocalexit broke Forbid...
 	Forbid();
